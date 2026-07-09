@@ -1,7 +1,6 @@
 ﻿target/
 .idea/
 *.iml
-.mvn/
-!.mvn/wrapper/maven-wrapper.jar
+
 HELP.md
 *.log
