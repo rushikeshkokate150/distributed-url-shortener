@@ -111,6 +111,38 @@ docker-compose up --build
 
 The API will be available at `http://localhost:8080`.
 
+## Cloud Deployment (AWS)
+
+Beyond local Docker Compose, this project is deployed on real AWS infrastructure using managed services rather than self-hosted containers for the database and cache:
+
+| Component | Service |
+|---|---|
+| Application host | EC2 (t3.micro), running the Dockerized Spring Boot app |
+| Database | RDS (PostgreSQL, db.t4g.micro) |
+| Cache | ElastiCache (Redis OSS, cache.t4g.micro), TLS-encrypted in transit |
+
+**Architecture change for cloud deployment:** the app's `application.properties` swaps local container hostnames (`postgres`, `redis`) for the actual RDS endpoint and ElastiCache configuration endpoint, with security groups configured to allow only the EC2 instance to reach each managed service.
+
+### Debugging notes: a real production issue
+
+Deploying to ElastiCache surfaced two compounding issues that don't show up in local development, worth documenting since they reflect genuine debugging rather than following a fixed recipe:
+
+1. **Netty's async DNS resolver failed silently inside the container**, timing out after a full minute with an `Unable to connect .../<unresolved>` error — despite the same hostname resolving instantly via `nslookup` and `nc` on the host itself. Root cause: Lettuce (the Redis client) defaults to Netty's DNS resolver, which behaves inconsistently in containerized environments for certain AWS-internal hostnames.
+2. **Switching to the raw IP address to sidestep the DNS issue then broke TLS certificate validation** (`No subject alternative names matching IP address... found`), since ElastiCache's certificate is issued for the hostname, not the IP — the two fixes were mutually exclusive on the surface.
+
+**Resolution:** kept the hostname (required for valid TLS), and instead explicitly configured Lettuce's `ClientResources` to use the JVM's built-in DNS resolver instead of Netty's:
+
+```java
+@Bean(destroyMethod = "shutdown")
+public ClientResources lettuceClientResources() {
+    return DefaultClientResources.builder()
+            .dnsResolver(DnsResolvers.JVM_DEFAULT)
+            .build();
+}
+```
+
+This preserved TLS validation while avoiding the resolver bug entirely — diagnosed by isolating each variable independently (DNS resolution vs. TCP connectivity vs. TLS handshake) rather than guessing at the fix.
+
 ## Running Load Tests
 
 Install [k6](https://k6.io/docs/getting-started/installation/), then:
